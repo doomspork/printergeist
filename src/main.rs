@@ -1,26 +1,19 @@
 pub mod handlers;
 
 use futures_util::{SinkExt, StreamExt};
-use std::{sync::Arc, time::Duration};
-use tokio::sync::Mutex;
+use std::time::Duration;
 use tokio::{
     net::{TcpListener, TcpStream},
     time::interval,
 };
-use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::{Error, Message};
 
-async fn handle_connection(raw_stream: TcpStream, addr: std::net::SocketAddr) {
-    println!("Incoming TCP connection from: {}", addr);
-
+async fn handle_connection(raw_stream: TcpStream) -> Result<(), Error> {
     let ws_stream = tokio_tungstenite::accept_async(raw_stream)
         .await
         .expect("Error during the websocket handshake occurred");
 
-    println!("WebSocket connection established: {}", addr);
-
-    let (outgoing, mut incoming) = ws_stream.split();
-
-    let outgoing = Arc::new(Mutex::new(outgoing));
+    let (mut outgoing, mut incoming) = ws_stream.split();
 
     let mut interval = interval(Duration::from_secs(5));
 
@@ -29,9 +22,14 @@ async fn handle_connection(raw_stream: TcpStream, addr: std::net::SocketAddr) {
             msg = incoming.next() => {
                 match msg {
                     Some(Ok(msg)) => {
-                        if None == handlers::handle_message(msg, outgoing.clone()).await {
-                            break;
-                        }
+                        match handlers::handle_message(msg).await {
+                            handlers::PrintResult::DISCONNECTED => {
+                                break;
+                            }
+                            handlers::PrintResult::SUCCESS(json) | handlers::PrintResult::FAILED(json) => {
+                                outgoing.send(Message::Text(json.to_string())).await.unwrap_or_else(|_| println!("Error sending message"));
+                            }
+                        };
                     }
                     Some(Err(e)) => {
                         eprintln!("Error receiving message: {}", e);
@@ -43,10 +41,12 @@ async fn handle_connection(raw_stream: TcpStream, addr: std::net::SocketAddr) {
                 }
             }
             _ = interval.tick() => {
-               outgoing.lock().await.send(Message::Text("ping".to_string())).await.expect("Error sending ping"); 
+               outgoing.send(Message::Text("ping".to_string())).await.expect("Error sending ping");
             }
         }
     }
+
+    Ok(())
 }
 
 #[tokio::main]
@@ -55,8 +55,7 @@ async fn main() {
 
     let listener = try_socket.expect("Failed to bind");
 
-    while let Ok((raw_stream, addr)) = listener.accept().await {
-        println!("Accepted connection from: {}", addr);
-        tokio::spawn(handle_connection(raw_stream, addr));
+    while let Ok((raw_stream, _)) = listener.accept().await {
+        tokio::spawn(handle_connection(raw_stream));
     }
 }

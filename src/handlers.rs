@@ -24,17 +24,14 @@ fn handle_printer_list() -> PrintResult {
         .map(|printer| json!({"name": printer.name, "system_name": printer.system_name}))
         .collect();
 
-    let printer_list = json!({ "data": printer_json });
+    let printer_list = json!(printer_json);
 
     PrintResult::SUCCESS(printer_list)
 }
 
 fn handle_print(data: Value) -> PrintResult {
-    let printer_name = data["printer_name"]
-        .as_str()
-        .expect("No printer name provided");
-
-    let contents = data["contents"].as_str().expect("No contents provided");
+    let printer_name = data["system_name"].as_str().unwrap_or("");
+    let contents = data["data"].as_str().expect("No contents provided");
 
     let result: PrintResult;
 
@@ -45,12 +42,14 @@ fn handle_print(data: Value) -> PrintResult {
 
         result = match job.status {
             JobStatus::SUCCESS => PrintResult::SUCCESS(json!({
-                "data": { "message": "Print job submitted successfully", "status": "success"},
-                "type": "print_response"
+                "message": "Print job submitted successfully",
+                "status": "success",
+                "type": "create_print_job"
             })),
             JobStatus::FAILED => PrintResult::FAILED(json!({
-                "data": { "message": "Print job failed", "status": "failure"},
-                "type": "print_response"
+                "message": "Print job failed",
+                "status": "failure",
+                "type": "create_print_job"
             })),
         };
     } else {
@@ -69,8 +68,8 @@ fn handle_client_request(msg: String) -> PrintResult {
     println!("Received message: {:?}", parsed);
 
     match parsed["type"].as_str() {
-        Some("print") => handle_print(parsed["data"].clone()),
-        Some("list") => handle_printer_list(),
+        Some("create_print_job") => handle_print(parsed),
+        Some("list_available_printers") => handle_printer_list(),
         _ => PrintResult::FAILED(json!({
             "error": { "message": "Unsupported message type"},
         })),
